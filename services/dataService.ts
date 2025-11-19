@@ -92,17 +92,29 @@ export const dataService = {
 
   getUserProfile: async (userId: string): Promise<UserProfile | null> => {
     try {
-        const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
+        // Timeout Guard for Profile Fetch
+        const timeout = new Promise<UserProfile | null>((resolve) => {
+            setTimeout(() => {
+                console.warn("Profile fetch timed out (5s) - returning null.");
+                resolve(null); 
+            }, 5000); 
+        });
+
+        const fetchPromise = supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .single()
+            .then(({ data, error }) => {
+                if (error) {
+                    console.warn('Error fetching profile:', error.message);
+                    return null;
+                }
+                return data as UserProfile;
+            });
+
+        return await Promise.race([fetchPromise, timeout]);
         
-        if (error) {
-            console.warn('Error fetching profile:', error.message);
-            return null;
-        }
-        return data as UserProfile;
     } catch (e) {
         console.error("Unexpected error fetching profile:", e);
         return null;
