@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, Shield, LogOut, User, Loader2, Wifi, WifiOff, AlertCircle, RefreshCw } from 'lucide-react';
+import { Activity, Shield, LogOut, User, Loader2, Wifi, WifiOff, AlertCircle, RefreshCw, Database, Copy, Eye } from 'lucide-react';
 import Hero from './components/Hero';
 import StatsDashboard from './components/StatsDashboard';
 import PredictionCard from './components/PredictionCard';
 import AdminPanel from './components/AdminPanel';
 import AuthModal from './components/AuthModal';
-import { Prediction, UserProfile, Stats, ViewState } from './types';
+import { Prediction, UserProfile, Stats, ViewState, Sport, PredictionStatus } from './types';
 import { dataService } from './services/dataService';
 import { supabase } from './lib/supabaseClient';
 
@@ -18,13 +18,14 @@ const App: React.FC = () => {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [showSchema, setShowSchema] = useState(false);
 
   const fetchData = async () => {
     setFetchError(null);
     try {
-      // Create a timeout promise to prevent hanging indefinitely
+      // Create a timeout promise (increased to 20s for cold starts)
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Connection timed out. Database may be unreachable.')), 10000)
+        setTimeout(() => reject(new Error('Connection timed out. Database may be unreachable or paused.')), 20000)
       );
 
       const preds = await Promise.race([
@@ -41,6 +42,17 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadMockData = () => {
+      const mockPredictions: Prediction[] = [
+          { id: '1', created_at: new Date().toISOString(), matchup_date: new Date(Date.now() + 86400000).toISOString(), sport: Sport.NBA, matchup: 'Lakers vs Warriors', wager_type: 'Lakers -3.5', odds: '1.91', units: 3, analysis: 'Mock analysis for preview purposes.', is_premium: true, status: PredictionStatus.PENDING },
+          { id: '2', created_at: new Date().toISOString(), matchup_date: new Date(Date.now() - 86400000).toISOString(), sport: Sport.NFL, matchup: 'Chiefs vs Bills', wager_type: 'Over 48.5', odds: '1.91', units: 5, analysis: 'Mock analysis.', is_premium: false, status: PredictionStatus.WON, result_score: '35-31' },
+      ];
+      setPredictions(mockPredictions);
+      setStats(dataService.calculateStats(mockPredictions));
+      setFetchError(null);
+      setLoading(false);
   };
 
   useEffect(() => {
@@ -108,26 +120,63 @@ const App: React.FC = () => {
   };
 
   // Error Boundary Fallback for View
-  // Shows only if loading is TRUE and we have NO data to show
   if (loading && !predictions.length && !stats.totalWins) {
      return (
          <div className="min-h-screen bg-vegas-black flex flex-col items-center justify-center text-white p-4 text-center">
              {fetchError ? (
-                 <div className="animate-in fade-in duration-500 flex flex-col items-center">
+                 <div className="animate-in fade-in duration-500 flex flex-col items-center w-full max-w-2xl">
                     <AlertCircle className="w-12 h-12 text-vegas-red mb-4" />
                     <h2 className="text-xl font-bold mb-2 text-vegas-red">CONNECTION ERROR</h2>
                     <p className="text-neutral-400 mb-6 max-w-md text-sm">{fetchError}</p>
+                    
+                    <div className="flex flex-wrap gap-3 justify-center mb-8">
+                        <button 
+                            onClick={() => { setLoading(true); fetchData(); }}
+                            className="flex items-center px-6 py-3 bg-neutral-800 hover:bg-neutral-700 rounded font-bold transition-colors border border-neutral-700"
+                        >
+                            <RefreshCw className="w-4 h-4 mr-2" /> Retry Connection
+                        </button>
+                        <button 
+                            onClick={loadMockData}
+                            className="flex items-center px-6 py-3 bg-vegas-green/10 text-vegas-green hover:bg-vegas-green/20 rounded font-bold transition-colors border border-vegas-green/30"
+                        >
+                            <Eye className="w-4 h-4 mr-2" /> View Demo Mode
+                        </button>
+                    </div>
+
                     <button 
-                        onClick={() => { setLoading(true); fetchData(); }}
-                        className="flex items-center px-6 py-3 bg-neutral-800 hover:bg-neutral-700 rounded font-bold transition-colors border border-neutral-700"
+                        onClick={() => setShowSchema(!showSchema)}
+                        className="flex items-center text-xs text-neutral-500 hover:text-white transition-colors mb-4"
                     >
-                        <RefreshCw className="w-4 h-4 mr-2" /> Retry Connection
+                        <Database className="w-3 h-3 mr-1.5" />
+                        {showSchema ? 'Hide' : 'Show'} Database Schema Setup
                     </button>
+
+                    {showSchema && (
+                        <div className="w-full bg-neutral-900 rounded-lg border border-neutral-800 p-4 text-left relative overflow-hidden">
+                            <div className="absolute top-2 right-2">
+                                <button 
+                                    onClick={() => navigator.clipboard.writeText(SQL_SCHEMA)}
+                                    className="p-1.5 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-400 hover:text-white transition-colors"
+                                    title="Copy SQL"
+                                >
+                                    <Copy className="w-4 h-4" />
+                                </button>
+                            </div>
+                            <pre className="text-[10px] md:text-xs font-mono text-neutral-400 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
+                                {SQL_SCHEMA}
+                            </pre>
+                            <p className="mt-2 text-xs text-vegas-gold text-center">
+                                Run this SQL in your Supabase SQL Editor to create the required tables.
+                            </p>
+                        </div>
+                    )}
                  </div>
              ) : (
                  <div className="flex flex-col items-center">
                     <Loader2 className="w-10 h-10 animate-spin text-vegas-green mb-4" />
                     <h2 className="text-xl font-bold tracking-widest animate-pulse">LOADING VAULT...</h2>
+                    <p className="text-neutral-500 text-xs mt-2">Connecting to secure feed</p>
                  </div>
              )}
          </div>
@@ -301,5 +350,51 @@ const CheckIcon = () => (
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
     </svg>
 );
+
+const SQL_SCHEMA = `
+-- Enable UUID extension
+create extension if not exists "uuid-ossp";
+
+-- Create Profiles Table
+create table if not exists public.profiles (
+  id uuid references auth.users not null primary key,
+  email text,
+  is_admin boolean default false,
+  subscription_status text default 'inactive',
+  stripe_customer_id text
+);
+
+-- Create Predictions Table
+create table if not exists public.predictions (
+  id uuid default uuid_generate_v4() primary key,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  matchup_date timestamp with time zone,
+  sport text,
+  matchup text,
+  wager_type text,
+  odds text,
+  units numeric,
+  analysis text,
+  is_premium boolean default false,
+  status text default 'pending',
+  result_score text
+);
+
+-- Enable RLS
+alter table public.profiles enable row level security;
+alter table public.predictions enable row level security;
+
+-- RLS Policies
+-- Profiles
+create policy "Public profiles are viewable by everyone." on public.profiles for select using ( true );
+create policy "Users can insert their own profile." on public.profiles for insert with check ( auth.uid() = id );
+create policy "Users can update own profile." on public.profiles for update using ( auth.uid() = id );
+
+-- Predictions
+create policy "Predictions are viewable by everyone." on public.predictions for select using ( true );
+create policy "Admins can insert predictions." on public.predictions for insert with check ( exists ( select 1 from public.profiles where id = auth.uid() and is_admin = true ) );
+create policy "Admins can update predictions." on public.predictions for update using ( exists ( select 1 from public.profiles where id = auth.uid() and is_admin = true ) );
+create policy "Admins can delete predictions." on public.predictions for delete using ( exists ( select 1 from public.profiles where id = auth.uid() and is_admin = true ) );
+`;
 
 export default App;

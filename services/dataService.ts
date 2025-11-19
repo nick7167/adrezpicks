@@ -3,6 +3,7 @@ import { Prediction, PredictionStatus, Stats, UserProfile } from '../types';
 
 export const dataService = {
   getPredictions: async (): Promise<Prediction[]> => {
+    console.log("Fetching predictions...");
     const { data, error } = await supabase
       .from('predictions')
       .select('*')
@@ -10,8 +11,11 @@ export const dataService = {
 
     if (error) {
       console.error('Error fetching predictions:', error);
+      // Return empty array on 404-like errors (table missing) so app doesn't crash,
+      // but other components can check for empty state.
       return [];
     }
+    console.log("Fetched predictions:", data?.length || 0);
     return (data || []) as Prediction[];
   },
 
@@ -69,17 +73,22 @@ export const dataService = {
   },
 
   getUserProfile: async (userId: string): Promise<UserProfile | null> => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    
-    if (error) {
-      console.warn('Error fetching profile:', error.message);
-      return null;
+    try {
+        const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+        
+        if (error) {
+            console.warn('Error fetching profile:', error.message);
+            return null;
+        }
+        return data as UserProfile;
+    } catch (e) {
+        console.error("Unexpected error fetching profile:", e);
+        return null;
     }
-    return data as UserProfile;
   },
 
   calculateStats: (predictions: Prediction[]): Stats => {
