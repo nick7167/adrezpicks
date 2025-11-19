@@ -4,19 +4,37 @@ import { Prediction, PredictionStatus, Stats, UserProfile } from '../types';
 export const dataService = {
   getPredictions: async (): Promise<Prediction[]> => {
     console.log("Fetching predictions...");
-    const { data, error } = await supabase
-      .from('predictions')
-      .select('*')
-      .order('created_at', { ascending: false });
+    
+    try {
+        // Create a timeout promise to prevent hanging indefinitely
+        // If Supabase takes longer than 5 seconds, we return empty list so the UI loads
+        const timeout = new Promise<Prediction[]>((resolve) => {
+            setTimeout(() => {
+                console.warn("Supabase fetch timed out (5s) - defaulting to empty list.");
+                resolve([]); 
+            }, 5000); 
+        });
 
-    if (error) {
-      console.error('Error fetching predictions:', error);
-      // Return empty array on 404-like errors (table missing) so app doesn't crash,
-      // but other components can check for empty state.
-      return [];
+        const fetchPromise = supabase
+            .from('predictions')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .then(({ data, error }) => {
+                if (error) {
+                    console.error('Error fetching predictions:', error);
+                    // Return empty array on error so app doesn't crash
+                    return [];
+                }
+                return (data || []) as Prediction[];
+            });
+
+        // Race the fetch against the timeout
+        return await Promise.race([fetchPromise, timeout]);
+
+    } catch (e) {
+        console.error("Unexpected error in getPredictions:", e);
+        return [];
     }
-    console.log("Fetched predictions:", data?.length || 0);
-    return (data || []) as Prediction[];
   },
 
   createPrediction: async (prediction: Omit<Prediction, 'id' | 'created_at' | 'status'>): Promise<Prediction | null> => {

@@ -15,30 +15,23 @@ const App: React.FC = () => {
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [stats, setStats] = useState<Stats>({ winRate: 0, totalUnits: 0, roi: 0, totalWins: 0, totalLosses: 0 });
   const [loading, setLoading] = useState(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
-  const [showSchema, setShowSchema] = useState(false);
-
+  
+  // Data Fetching
   const fetchData = async () => {
-    setFetchError(null);
+    setLoading(true);
     try {
-      // Create a timeout promise (increased to 20s for cold starts)
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Connection timed out. Database may be unreachable or paused.')), 20000)
-      );
-
-      const preds = await Promise.race([
-        dataService.getPredictions(),
-        timeoutPromise
-      ]) as Prediction[];
-
+      // Use the service directly - it now handles timeouts internally by returning []
+      const preds = await dataService.getPredictions();
+      
       const calculatedStats = dataService.calculateStats(preds);
       setPredictions(preds);
       setStats(calculatedStats);
     } catch (err: any) {
       console.error("Failed to fetch data", err);
-      setFetchError(err.message || "Failed to load data");
+      // Fallback to empty state so the app still renders
+      setPredictions([]);
     } finally {
       setLoading(false);
     }
@@ -51,7 +44,6 @@ const App: React.FC = () => {
       ];
       setPredictions(mockPredictions);
       setStats(dataService.calculateStats(mockPredictions));
-      setFetchError(null);
       setLoading(false);
   };
 
@@ -118,70 +110,6 @@ const App: React.FC = () => {
     setUser(null);
     setView('home');
   };
-
-  // Error Boundary Fallback for View
-  if (loading && !predictions.length && !stats.totalWins) {
-     return (
-         <div className="min-h-screen bg-vegas-black flex flex-col items-center justify-center text-white p-4 text-center">
-             {fetchError ? (
-                 <div className="animate-in fade-in duration-500 flex flex-col items-center w-full max-w-2xl">
-                    <AlertCircle className="w-12 h-12 text-vegas-red mb-4" />
-                    <h2 className="text-xl font-bold mb-2 text-vegas-red">CONNECTION ERROR</h2>
-                    <p className="text-neutral-400 mb-6 max-w-md text-sm">{fetchError}</p>
-                    
-                    <div className="flex flex-wrap gap-3 justify-center mb-8">
-                        <button 
-                            onClick={() => { setLoading(true); fetchData(); }}
-                            className="flex items-center px-6 py-3 bg-neutral-800 hover:bg-neutral-700 rounded font-bold transition-colors border border-neutral-700"
-                        >
-                            <RefreshCw className="w-4 h-4 mr-2" /> Retry Connection
-                        </button>
-                        <button 
-                            onClick={loadMockData}
-                            className="flex items-center px-6 py-3 bg-vegas-green/10 text-vegas-green hover:bg-vegas-green/20 rounded font-bold transition-colors border border-vegas-green/30"
-                        >
-                            <Eye className="w-4 h-4 mr-2" /> View Demo Mode
-                        </button>
-                    </div>
-
-                    <button 
-                        onClick={() => setShowSchema(!showSchema)}
-                        className="flex items-center text-xs text-neutral-500 hover:text-white transition-colors mb-4"
-                    >
-                        <Database className="w-3 h-3 mr-1.5" />
-                        {showSchema ? 'Hide' : 'Show'} Database Schema Setup
-                    </button>
-
-                    {showSchema && (
-                        <div className="w-full bg-neutral-900 rounded-lg border border-neutral-800 p-4 text-left relative overflow-hidden">
-                            <div className="absolute top-2 right-2">
-                                <button 
-                                    onClick={() => navigator.clipboard.writeText(SQL_SCHEMA)}
-                                    className="p-1.5 bg-neutral-800 hover:bg-neutral-700 rounded text-neutral-400 hover:text-white transition-colors"
-                                    title="Copy SQL"
-                                >
-                                    <Copy className="w-4 h-4" />
-                                </button>
-                            </div>
-                            <pre className="text-[10px] md:text-xs font-mono text-neutral-400 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
-                                {SQL_SCHEMA}
-                            </pre>
-                            <p className="mt-2 text-xs text-vegas-gold text-center">
-                                Run this SQL in your Supabase SQL Editor to create the required tables.
-                            </p>
-                        </div>
-                    )}
-                 </div>
-             ) : (
-                 <div className="flex flex-col items-center">
-                    <Loader2 className="w-10 h-10 animate-spin text-vegas-green mb-4" />
-                    <h2 className="text-xl font-bold tracking-widest animate-pulse">LOADING VAULT...</h2>
-                    <p className="text-neutral-500 text-xs mt-2">Connecting to secure feed</p>
-                 </div>
-             )}
-         </div>
-     );
-  }
 
   return (
     <div className="min-h-screen bg-vegas-black text-white font-sans selection:bg-vegas-green selection:text-black">
@@ -254,7 +182,7 @@ const App: React.FC = () => {
 
       <main className="max-w-6xl mx-auto px-4 pb-20">
         {view === 'admin' ? (
-            <div className="py-10">
+            <div className="py-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
                  <div className="mb-8 flex items-center justify-between">
                     <h2 className="text-3xl font-bold text-white">Admin Console</h2>
                     <button onClick={fetchData} className="text-sm text-vegas-green hover:underline">Refresh Data</button>
@@ -277,8 +205,13 @@ const App: React.FC = () => {
                             </div>
                         </div>
                         
-                        <div className="space-y-4">
-                            {predictions.length > 0 ? (
+                        <div className="space-y-4 min-h-[200px]">
+                            {loading ? (
+                                <div className="flex flex-col items-center justify-center py-12 text-neutral-500 bg-neutral-900/20 rounded border border-neutral-800 border-dashed">
+                                    <Loader2 className="w-8 h-8 animate-spin mb-2 text-vegas-green" />
+                                    <p>Loading predictions...</p>
+                                </div>
+                            ) : predictions.length > 0 ? (
                                 predictions.map(prediction => (
                                     <PredictionCard 
                                         key={prediction.id} 
@@ -289,15 +222,17 @@ const App: React.FC = () => {
                                 ))
                             ) : (
                                 <div className="text-center py-20 text-neutral-600 bg-neutral-900/20 rounded border border-neutral-800 border-dashed flex flex-col items-center">
-                                    {fetchError ? (
-                                        <p className="text-red-500">Error loading picks: {fetchError}</p>
-                                    ) : (
-                                        <>
-                                            <Activity className="w-10 h-10 text-neutral-700 mb-3" />
-                                            <p>No active predictions currently.</p>
-                                            <p className="text-xs mt-2">Check back later for new analysis.</p>
-                                        </>
-                                    )}
+                                    <Activity className="w-10 h-10 text-neutral-700 mb-3" />
+                                    <p>No active predictions currently.</p>
+                                    <p className="text-xs mt-2 mb-4">Check back later for new analysis.</p>
+                                    
+                                    {/* Helper to create mock data if empty */}
+                                    <button 
+                                        onClick={loadMockData}
+                                        className="text-xs text-vegas-green hover:underline flex items-center"
+                                    >
+                                        <Eye className="w-3 h-3 mr-1" /> View Example Data
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -350,51 +285,5 @@ const CheckIcon = () => (
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
     </svg>
 );
-
-const SQL_SCHEMA = `
--- Enable UUID extension
-create extension if not exists "uuid-ossp";
-
--- Create Profiles Table
-create table if not exists public.profiles (
-  id uuid references auth.users not null primary key,
-  email text,
-  is_admin boolean default false,
-  subscription_status text default 'inactive',
-  stripe_customer_id text
-);
-
--- Create Predictions Table
-create table if not exists public.predictions (
-  id uuid default uuid_generate_v4() primary key,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  matchup_date timestamp with time zone,
-  sport text,
-  matchup text,
-  wager_type text,
-  odds text,
-  units numeric,
-  analysis text,
-  is_premium boolean default false,
-  status text default 'pending',
-  result_score text
-);
-
--- Enable RLS
-alter table public.profiles enable row level security;
-alter table public.predictions enable row level security;
-
--- RLS Policies
--- Profiles
-create policy "Public profiles are viewable by everyone." on public.profiles for select using ( true );
-create policy "Users can insert their own profile." on public.profiles for insert with check ( auth.uid() = id );
-create policy "Users can update own profile." on public.profiles for update using ( auth.uid() = id );
-
--- Predictions
-create policy "Predictions are viewable by everyone." on public.predictions for select using ( true );
-create policy "Admins can insert predictions." on public.predictions for insert with check ( exists ( select 1 from public.profiles where id = auth.uid() and is_admin = true ) );
-create policy "Admins can update predictions." on public.predictions for update using ( exists ( select 1 from public.profiles where id = auth.uid() and is_admin = true ) );
-create policy "Admins can delete predictions." on public.predictions for delete using ( exists ( select 1 from public.profiles where id = auth.uid() and is_admin = true ) );
-`;
 
 export default App;
