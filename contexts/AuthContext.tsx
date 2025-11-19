@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { UserProfile } from '../types';
 import { dataService } from '../services/dataService';
@@ -19,16 +19,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<UserProfile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const mounted = useRef(true);
 
-  // robust profile fetcher that handles missing rows gracefully
-  const fetchAndSetProfile = useCallback(async (currentSession: Session) => {
+  // Retry logic for profile fetching
+  const fetchProfile = useCallback(async (currentSession: Session) => {
     try {
       const profileData = await dataService.getUserProfile(currentSession.user.id);
       
+      if (!mounted.current) return;
+
       if (profileData) {
         setUser(profileData);
       } else {
-        // Fallback if profile row is missing in DB but Auth exists
+        // Fallback: User exists in Auth but not in 'profiles' table yet
         setUser({
           id: currentSession.user.id,
           email: currentSession.user.email || '',
@@ -38,87 +41,112 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (error) {
       console.error("Profile sync error:", error);
-      // Even on error, valid session means we are logged in, just with basic info
-      setUser({
-        id: currentSession.user.id,
-        email: currentSession.user.email || '',
-        is_admin: false,
-        subscription_status: 'none'
-      });
+      if (mounted.current) {
+        // Graceful degradation: Log them in with basic rights rather than crashing
+        setUser({
+            id: currentSession.user.id,
+            email: currentSession.user.email || '',
+            is_admin: false,
+            subscription_status: 'none'
+        });
+      }
     }
   }, []);
 
   useEffect(() => {
-    let mounted = true;
+    mounted.current = true;
+    let safetyTimer: ReturnType<typeof setTimeout>;
 
     const initializeAuth = async () => {
       try {
-        // 1. Check active session immediately
-        const { data: { session: initialSession } } = await supabase.auth.getSession();
+        // 1. Set a fail-safe timeout. If Supabase hangs for 3s, force the app to load.
+        safetyTimer = setTimeout(() => {
+            if (mounted.current && loading) {
+                console.warn("Auth timed out. Forcing application load.");
+                setLoading(false);
+            }
+        }, 3000);
+
+        // 2. Check for an active session immediately
+        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
         
-        if (mounted) {
+        if (error) throw error;
+
+        if (mounted.current) {
             if (initialSession) {
                 setSession(initialSession);
-                await fetchAndSetProfile(initialSession);
+                // Await profile to prevent UI flicker, but rely on safetyTimer if it hangs
+                await fetchProfile(initialSession);
             }
         }
       } catch (error) {
         console.error("Auth initialization failed:", error);
+        // If session is corrupt, clear it to prevent infinite loops
+        if (mounted.current) {
+             await supabase.auth.signOut().catch(() => {});
+             setSession(null);
+             setUser(null);
+        }
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted.current) {
+            setLoading(false);
+            clearTimeout(safetyTimer);
+        }
       }
     };
 
     initializeAuth();
 
-    // 2. Set up the single source of truth listener
+    // 3. Listen for live auth changes (Login, Logout, Auto-Refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-      if (!mounted) return;
+      if (!mounted.current) return;
       
-      // console.log("Auth Event:", event); // Debugging
+      setSession(newSession);
 
-      if (newSession) {
-        setSession(newSession);
-        // Only refetch profile on sign-in or initial load to save bandwidth
-        // Token refresh shouldn't necessarily trigger a profile refetch unless needed
-        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED') {
-             await fetchAndSetProfile(newSession);
-        } else if (!user) {
-            // If we have a session but no user in state (rare edge case), fetch it
-            await fetchAndSetProfile(newSession);
+      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+        if (newSession) {
+            await fetchProfile(newSession);
         }
-      } else {
-        // Explicitly handle logout
-        setSession(null);
+      } else if (event === 'SIGNED_OUT') {
         setUser(null);
+        setSession(null);
+      } else if (event === 'TOKEN_REFRESHED') {
+        // Token refreshed, usually profile data hasn't changed, so we skip fetching
+        // to avoid race conditions, unless we somehow lost the user state.
+        if (newSession && !user) {
+            await fetchProfile(newSession);
+        }
       }
       
-      // Ensure loading is false after any auth event
+      // Always ensure loading is false after an event is processed
       setLoading(false);
     });
 
     return () => {
-      mounted = false;
+      mounted.current = false;
+      if (safetyTimer) clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
-  }, [fetchAndSetProfile, user]);
+  }, [fetchProfile]); // user/session omitted to prevent re-running subscription
 
   const signOut = async () => {
     try {
         setLoading(true);
         await supabase.auth.signOut();
-        setUser(null);
-        setSession(null);
+        if (mounted.current) {
+            setUser(null);
+            setSession(null);
+        }
     } catch (error) {
         console.error("Sign out error:", error);
     } finally {
-        setLoading(false);
+        if (mounted.current) setLoading(false);
     }
   };
 
   const refreshProfile = async () => {
     if (session) {
-      await fetchAndSetProfile(session);
+      await fetchProfile(session);
     }
   };
 

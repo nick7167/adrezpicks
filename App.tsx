@@ -84,7 +84,7 @@ const App: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'predictions' },
         () => {
-          addToast("New data received", 'info');
+          // Optional: throttle this if updates are frequent
           fetchPredictions();
         }
       )
