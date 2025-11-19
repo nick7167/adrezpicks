@@ -29,6 +29,7 @@ const App: React.FC = () => {
   const fetchPredictions = async () => {
     setLoadingData(true);
     try {
+      console.log("Fetching predictions...");
       const preds = await dataService.getPredictions();
       const calculatedStats = dataService.calculateStats(preds);
       setPredictions(preds);
@@ -52,36 +53,56 @@ const App: React.FC = () => {
 
   // --- 2. AUTHENTICATION BOOTSTRAP ---
   useEffect(() => {
+    let mounted = true;
+
     const initializeApp = async () => {
       setIsAuthInitializing(true);
       
-      // A. Check for active session
-      const { data: { session } } = await supabase.auth.getSession();
+      // Safety Timeout: Force UI load if auth takes too long (e.g. Cold Start or Network Issue)
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('timeout'), 2000));
       
-      if (session) {
-        console.log("Session found, fetching profile...");
-        const profile = await dataService.getUserProfile(session.user.id);
-        
-        if (profile) {
-            setUser(profile);
-        } else {
-            // Fallback if profile table is missing or trigger failed
-            console.warn("Profile not found, using fallback.");
-            setUser({
-                id: session.user.id,
-                email: session.user.email || '',
-                is_admin: false,
-                subscription_status: 'none'
-            });
-        }
+      const authPromise = (async () => {
+          try {
+            const { data: { session }, error } = await supabase.auth.getSession();
+            if (error) throw error;
+            return session;
+          } catch (e) {
+              console.warn("Session check failed or timed out:", e);
+              return null;
+          }
+      })();
+
+      // Race: Whichever finishes first. 
+      // If timeout wins, we load the app in "guest" mode and let auth resolve later via listener.
+      const result = await Promise.race([authPromise, timeoutPromise]);
+
+      if (result === 'timeout') {
+          console.warn("Auth initialization timed out. Forcing UI load.");
       } else {
-          console.log("No session found.");
+          const session = result as any;
+          if (session && mounted) {
+            console.log("Session restored via getSession:", session.user.email);
+            try {
+                const profile = await dataService.getUserProfile(session.user.id);
+                if (mounted) {
+                    setUser(profile || {
+                        id: session.user.id,
+                        email: session.user.email || '',
+                        is_admin: false,
+                        subscription_status: 'none'
+                    });
+                }
+            } catch (err) {
+                console.error("Profile fetch failed:", err);
+            }
+          }
       }
 
-      // B. Initial Data Load (happens regardless of auth status)
-      await fetchPredictions();
-      
-      setIsAuthInitializing(false);
+      if (mounted) {
+          setIsAuthInitializing(false);
+          // Trigger data load AFTER UI is ready to render
+          fetchPredictions();
+      }
     };
 
     initializeApp();
@@ -90,18 +111,39 @@ const App: React.FC = () => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log("Auth Event:", event);
       
+      if (!mounted) return;
+
       if (event === 'SIGNED_IN' && session) {
-         // Refetch profile to ensure we have latest rights
-         const profile = await dataService.getUserProfile(session.user.id);
-         setUser(profile || {
-             id: session.user.id,
-             email: session.user.email || '',
-             is_admin: false,
-             subscription_status: 'none'
-         });
+         // Only fetch profile if we don't have it or it's different
+         if (!user || user.id !== session.user.id) {
+             const profile = await dataService.getUserProfile(session.user.id);
+             if (mounted) {
+                setUser(profile || {
+                    id: session.user.id,
+                    email: session.user.email || '',
+                    is_admin: false,
+                    subscription_status: 'none'
+                });
+             }
+         }
       } else if (event === 'SIGNED_OUT') {
-         setUser(null);
-         setView('home');
+         if (mounted) {
+             setUser(null);
+             setView('home');
+         }
+      } else if (event === 'INITIAL_SESSION') {
+          // This event is sometimes fired by supabase-js 2.x
+          if (session) {
+             const profile = await dataService.getUserProfile(session.user.id);
+             if (mounted) {
+                setUser(profile || {
+                    id: session.user.id,
+                    email: session.user.email || '',
+                    is_admin: false,
+                    subscription_status: 'none'
+                });
+             }
+          }
       }
     });
 
@@ -117,11 +159,14 @@ const App: React.FC = () => {
         }
       )
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') setRealtimeConnected(true);
-        else setRealtimeConnected(false);
+        if (mounted) {
+            if (status === 'SUBSCRIBED') setRealtimeConnected(true);
+            else setRealtimeConnected(false);
+        }
       });
 
     return () => {
+      mounted = false;
       subscription.unsubscribe();
       supabase.removeChannel(predictionChannel);
     };
@@ -225,7 +270,9 @@ const App: React.FC = () => {
             <div className="py-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
                  <div className="mb-8 flex items-center justify-between">
                     <h2 className="text-3xl font-bold text-white">Admin Console</h2>
-                    <button onClick={fetchPredictions} className="text-sm text-vegas-green hover:underline">Refresh Data</button>
+                    <button onClick={fetchPredictions} className="text-sm text-vegas-green hover:underline flex items-center">
+                        <RefreshCw className="w-3 h-3 mr-1" /> Refresh Data
+                    </button>
                 </div>
                 <AdminPanel predictions={predictions} onUpdate={fetchPredictions} />
             </div>
@@ -243,7 +290,7 @@ const App: React.FC = () => {
                         </div>
                         
                         <div className="space-y-4 min-h-[200px]">
-                            {loadingData ? (
+                            {loadingData && predictions.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-12 text-neutral-500 bg-neutral-900/20 rounded border border-neutral-800 border-dashed">
                                     <Loader2 className="w-8 h-8 animate-spin mb-2 text-vegas-green" />
                                     <p>Loading predictions...</p>
@@ -263,12 +310,20 @@ const App: React.FC = () => {
                                     <p>No active predictions found.</p>
                                     <p className="text-xs mt-2 mb-4 text-neutral-500">The database might be empty or waking up.</p>
                                     
-                                    <button 
-                                        onClick={loadMockData}
-                                        className="text-xs text-vegas-green hover:underline flex items-center border border-vegas-green/30 px-3 py-2 rounded bg-vegas-green/5 hover:bg-vegas-green/10"
-                                    >
-                                        <Eye className="w-3 h-3 mr-2" /> Load Demo Data
-                                    </button>
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={fetchPredictions}
+                                            className="text-xs text-white hover:text-vegas-green flex items-center border border-neutral-700 px-3 py-2 rounded bg-neutral-800 hover:bg-neutral-700"
+                                        >
+                                            <RefreshCw className="w-3 h-3 mr-2" /> Retry
+                                        </button>
+                                        <button 
+                                            onClick={loadMockData}
+                                            className="text-xs text-vegas-green hover:underline flex items-center border border-vegas-green/30 px-3 py-2 rounded bg-vegas-green/5 hover:bg-vegas-green/10"
+                                        >
+                                            <Eye className="w-3 h-3 mr-2" /> Load Demo Data
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                         </div>
