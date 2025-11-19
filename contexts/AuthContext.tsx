@@ -23,32 +23,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Helper to unify profile fetching logic
   const fetchProfile = async (currentSession: Session) => {
     try {
-      // 2-second timeout specifically for profile fetch to prevent secondary hang
-      const profilePromise = dataService.getUserProfile(currentSession.user.id);
-      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
-      
-      const profile = await Promise.race([profilePromise, timeoutPromise]);
+      // Removed Promise.race timeout which was causing permissions to drop on tab resume/network lag
+      const profile = await dataService.getUserProfile(currentSession.user.id);
 
       if (profile) {
         setUser(profile);
       } else {
-        // Fallback if profile table is empty/missing/slow
-        // Check if the session is actually valid, if not, user might be null
-        setUser({
-          id: currentSession.user.id,
-          email: currentSession.user.email || '',
-          is_admin: false,
-          subscription_status: 'none'
+        // Profile not found in DB, implies basic user
+        // Only overwrite if we are sure we didn't get a profile
+        setUser(prev => {
+             // If we already have a profile for this ID, and the DB returned null (maybe temporary glitch?), 
+             // we might want to be careful, but typically null means "row missing". 
+             // We'll assume row missing means basic user.
+             return {
+                id: currentSession.user.id,
+                email: currentSession.user.email || '',
+                is_admin: false,
+                subscription_status: 'none'
+            };
         });
       }
     } catch (error) {
       console.error("Profile sync error:", error);
-      // Fallback on error to ensure user is still logged in UI-wise
-      setUser({
-        id: currentSession.user.id,
-        email: currentSession.user.email || '',
-        is_admin: false,
-        subscription_status: 'none'
+      // On network error, preserve existing user state if ID matches
+      setUser(prev => {
+          if (prev && prev.id === currentSession.user.id) {
+              return prev;
+          }
+          return {
+            id: currentSession.user.id,
+            email: currentSession.user.email || '',
+            is_admin: false,
+            subscription_status: 'none'
+          };
       });
     }
   };

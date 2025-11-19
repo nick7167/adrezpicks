@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Activity, Shield, LogOut, User, Loader2, Wifi, WifiOff, RefreshCw, Eye, Bell } from 'lucide-react';
+import React, { useEffect, useState, useMemo } from 'react';
+import { Activity, Shield, LogOut, User, Loader2, Wifi, WifiOff, RefreshCw, Eye, Bell, ChevronDown } from 'lucide-react';
 import Hero from './components/Hero';
 import StatsDashboard from './components/StatsDashboard';
 import PredictionCard from './components/PredictionCard';
@@ -17,6 +17,8 @@ interface Toast {
     type: 'success' | 'error' | 'info';
 }
 
+type SortOption = 'date-desc' | 'date-asc' | 'odds-desc' | 'units-desc' | 'status';
+
 const App: React.FC = () => {
   const { user, loading: authLoading, signOut } = useAuth();
   const [view, setView] = useState<ViewState>('home');
@@ -30,6 +32,7 @@ const App: React.FC = () => {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [sortBy, setSortBy] = useState<SortOption>('date-desc');
 
   // -- Toast Logic --
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -97,6 +100,33 @@ const App: React.FC = () => {
       supabase.removeChannel(predictionChannel);
     };
   }, [authLoading]); // Re-run once auth settles
+
+  // -- Derived State --
+  const sortedPredictions = useMemo(() => {
+    return [...predictions].sort((a, b) => {
+        switch (sortBy) {
+            case 'date-desc':
+                return new Date(b.matchup_date).getTime() - new Date(a.matchup_date).getTime();
+            case 'date-asc':
+                return new Date(a.matchup_date).getTime() - new Date(b.matchup_date).getTime();
+            case 'odds-desc':
+                return (parseFloat(b.odds) || 0) - (parseFloat(a.odds) || 0);
+            case 'units-desc':
+                return b.units - a.units;
+            case 'status':
+                // Custom order: Pending > Won > Lost > Push
+                const statusOrder = { 
+                    [PredictionStatus.PENDING]: 0, 
+                    [PredictionStatus.WON]: 1, 
+                    [PredictionStatus.LOST]: 2, 
+                    [PredictionStatus.PUSH]: 3 
+                };
+                return (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99);
+            default:
+                return 0;
+        }
+    });
+  }, [predictions, sortBy]);
 
   // -- Handlers --
   const handleUpgrade = () => {
@@ -260,7 +290,24 @@ const App: React.FC = () => {
                                 <Activity className="w-5 h-5 text-vegas-green" /> 
                                 Recent Picks
                             </h2>
-                            {loadingData && <Loader2 className="w-4 h-4 animate-spin text-vegas-green" />}
+                            
+                            <div className="flex items-center gap-3">
+                                <div className="relative group">
+                                     <select 
+                                        value={sortBy}
+                                        onChange={(e) => setSortBy(e.target.value as SortOption)}
+                                        className="appearance-none bg-neutral-900 border border-neutral-800 hover:border-neutral-700 text-neutral-300 text-xs font-bold uppercase tracking-wider rounded pl-3 pr-8 py-2 outline-none focus:border-vegas-green cursor-pointer transition-colors"
+                                    >
+                                        <option value="date-desc">Date: Newest</option>
+                                        <option value="date-asc">Date: Oldest</option>
+                                        <option value="odds-desc">Odds: High to Low</option>
+                                        <option value="units-desc">Confidence: High to Low</option>
+                                        <option value="status">Status</option>
+                                    </select>
+                                    <ChevronDown className="w-3 h-3 text-neutral-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none group-hover:text-neutral-300 transition-colors" />
+                                </div>
+                                {loadingData && <Loader2 className="w-4 h-4 animate-spin text-vegas-green" />}
+                            </div>
                         </div>
                         
                         <div className="space-y-4 min-h-[200px]">
@@ -269,8 +316,8 @@ const App: React.FC = () => {
                                     <Loader2 className="w-8 h-8 animate-spin mb-2 text-vegas-green" />
                                     <p>Loading intel...</p>
                                 </div>
-                            ) : predictions.length > 0 ? (
-                                predictions.map(prediction => (
+                            ) : sortedPredictions.length > 0 ? (
+                                sortedPredictions.map(prediction => (
                                     <PredictionCard 
                                         key={prediction.id} 
                                         prediction={prediction} 
