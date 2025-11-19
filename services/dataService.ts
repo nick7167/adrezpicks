@@ -3,7 +3,6 @@ import { Prediction, PredictionStatus, Stats, UserProfile } from '../types';
 
 export const dataService = {
   getPredictions: async (): Promise<Prediction[]> => {
-    // No more artificial timeouts. Let Supabase connection resolve naturally.
     const { data, error } = await supabase
         .from('predictions')
         .select('*')
@@ -11,7 +10,6 @@ export const dataService = {
 
     if (error) {
         console.error('Error fetching predictions:', error);
-        // Return empty array only on actual error
         return [];
     }
     return (data || []) as Prediction[];
@@ -76,17 +74,13 @@ export const dataService = {
             .from('profiles')
             .select('*')
             .eq('id', userId)
-            .single();
+            .maybeSingle(); // Use maybeSingle to avoid errors on empty results
 
         if (error) {
-            // specific check for "row not found" which is expected if trigger failed
-            if (error.code === 'PGRST116') {
-                console.warn("User profile row does not exist.");
-                return null;
-            }
             console.error('Error fetching profile:', error);
             return null;
         }
+        
         return data as UserProfile;
     } catch (e) {
         console.error("Unexpected error fetching profile:", e);
