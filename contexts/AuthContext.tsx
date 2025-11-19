@@ -88,14 +88,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                          localStorage.removeItem(key);
                      }
                  });
-                 // Force sign out state in client to be safe
-                 await supabase.auth.signOut().catch(() => {});
+                 
+                 // REMOVED: supabase.auth.signOut() 
+                 // Do not call signOut here. If the client is stuck, calling this (even without await)
+                 // can queue microtasks that prevent the state update below from rendering.
+                 // We rely on the localStorage clear for the NEXT reload, and manual state reset for NOW.
              } catch (e) {
                  console.error("Error clearing stale auth:", e);
              }
              
+             // Force Guest Mode immediately to unlock UI
              setSession(null);
              setUser(null);
+             setLoading(false);
+             return; // Exit early to avoid finally block redundantly setting state
         }
       } finally {
         if (mounted.current) {
