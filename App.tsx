@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, Shield, LogOut, User, Loader2, Wifi, WifiOff } from 'lucide-react';
+import { Activity, Shield, LogOut, User, Loader2, Wifi, WifiOff, AlertCircle, RefreshCw } from 'lucide-react';
 import Hero from './components/Hero';
 import StatsDashboard from './components/StatsDashboard';
 import PredictionCard from './components/PredictionCard';
@@ -15,17 +15,29 @@ const App: React.FC = () => {
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [stats, setStats] = useState<Stats>({ winRate: 0, totalUnits: 0, roi: 0, totalWins: 0, totalLosses: 0 });
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
 
   const fetchData = async () => {
+    setFetchError(null);
     try {
-      const preds = await dataService.getPredictions();
+      // Create a timeout promise to prevent hanging indefinitely
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connection timed out. Database may be unreachable.')), 10000)
+      );
+
+      const preds = await Promise.race([
+        dataService.getPredictions(),
+        timeoutPromise
+      ]) as Prediction[];
+
       const calculatedStats = dataService.calculateStats(preds);
       setPredictions(preds);
       setStats(calculatedStats);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to fetch data", err);
+      setFetchError(err.message || "Failed to load data");
     } finally {
       setLoading(false);
     }
@@ -96,11 +108,28 @@ const App: React.FC = () => {
   };
 
   // Error Boundary Fallback for View
+  // Shows only if loading is TRUE and we have NO data to show
   if (loading && !predictions.length && !stats.totalWins) {
      return (
-         <div className="min-h-screen bg-vegas-black flex flex-col items-center justify-center text-white">
-             <Loader2 className="w-10 h-10 animate-spin text-vegas-green mb-4" />
-             <h2 className="text-xl font-bold tracking-widest">LOADING VAULT...</h2>
+         <div className="min-h-screen bg-vegas-black flex flex-col items-center justify-center text-white p-4 text-center">
+             {fetchError ? (
+                 <div className="animate-in fade-in duration-500 flex flex-col items-center">
+                    <AlertCircle className="w-12 h-12 text-vegas-red mb-4" />
+                    <h2 className="text-xl font-bold mb-2 text-vegas-red">CONNECTION ERROR</h2>
+                    <p className="text-neutral-400 mb-6 max-w-md text-sm">{fetchError}</p>
+                    <button 
+                        onClick={() => { setLoading(true); fetchData(); }}
+                        className="flex items-center px-6 py-3 bg-neutral-800 hover:bg-neutral-700 rounded font-bold transition-colors border border-neutral-700"
+                    >
+                        <RefreshCw className="w-4 h-4 mr-2" /> Retry Connection
+                    </button>
+                 </div>
+             ) : (
+                 <div className="flex flex-col items-center">
+                    <Loader2 className="w-10 h-10 animate-spin text-vegas-green mb-4" />
+                    <h2 className="text-xl font-bold tracking-widest animate-pulse">LOADING VAULT...</h2>
+                 </div>
+             )}
          </div>
      );
   }
@@ -210,8 +239,16 @@ const App: React.FC = () => {
                                     />
                                 ))
                             ) : (
-                                <div className="text-center py-20 text-neutral-600 bg-neutral-900/20 rounded border border-neutral-800 border-dashed">
-                                    No picks active currently. Check back soon.
+                                <div className="text-center py-20 text-neutral-600 bg-neutral-900/20 rounded border border-neutral-800 border-dashed flex flex-col items-center">
+                                    {fetchError ? (
+                                        <p className="text-red-500">Error loading picks: {fetchError}</p>
+                                    ) : (
+                                        <>
+                                            <Activity className="w-10 h-10 text-neutral-700 mb-3" />
+                                            <p>No active predictions currently.</p>
+                                            <p className="text-xs mt-2">Check back later for new analysis.</p>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>

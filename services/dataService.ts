@@ -12,7 +12,7 @@ export const dataService = {
       console.error('Error fetching predictions:', error);
       return [];
     }
-    return data as Prediction[];
+    return (data || []) as Prediction[];
   },
 
   createPrediction: async (prediction: Omit<Prediction, 'id' | 'created_at' | 'status'>): Promise<Prediction | null> => {
@@ -21,7 +21,6 @@ export const dataService = {
       .insert([{
         ...prediction,
         status: PredictionStatus.PENDING,
-        // Supabase handles created_at usually, but we can pass it if needed or rely on default
       }])
       .select()
       .single();
@@ -77,7 +76,6 @@ export const dataService = {
       .single();
     
     if (error) {
-      // Profile might not exist yet if trigger hasn't run, return basic info if needed
       console.warn('Error fetching profile:', error.message);
       return null;
     }
@@ -85,6 +83,10 @@ export const dataService = {
   },
 
   calculateStats: (predictions: Prediction[]): Stats => {
+    if (!predictions || !Array.isArray(predictions)) {
+        return { winRate: 0, totalUnits: 0, roi: 0, totalWins: 0, totalLosses: 0 };
+    }
+
     const settled = predictions.filter(p => p.status === PredictionStatus.WON || p.status === PredictionStatus.LOST);
     const wins = settled.filter(p => p.status === PredictionStatus.WON);
     const losses = settled.filter(p => p.status === PredictionStatus.LOST);
