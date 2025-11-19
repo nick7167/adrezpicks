@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Activity, Shield, LogIn, LogOut, User } from 'lucide-react';
+import { Activity, Shield, LogOut, User, Loader2, Wifi, WifiOff } from 'lucide-react';
 import Hero from './components/Hero';
 import StatsDashboard from './components/StatsDashboard';
 import PredictionCard from './components/PredictionCard';
 import AdminPanel from './components/AdminPanel';
+import AuthModal from './components/AuthModal';
 import { Prediction, UserProfile, Stats, ViewState } from './types';
 import { dataService } from './services/dataService';
+import { supabase } from './lib/supabaseClient';
 
 const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('home');
@@ -13,60 +15,100 @@ const App: React.FC = () => {
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [stats, setStats] = useState<Stats>({ winRate: 0, totalUnits: 0, roi: 0, totalWins: 0, totalLosses: 0 });
   const [loading, setLoading] = useState(true);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
 
   const fetchData = async () => {
-    setLoading(true);
-    const preds = await dataService.getPredictions();
-    const calculatedStats = dataService.calculateStats(preds);
-    setPredictions(preds);
-    setStats(calculatedStats);
-    setLoading(false);
+    try {
+      const preds = await dataService.getPredictions();
+      const calculatedStats = dataService.calculateStats(preds);
+      setPredictions(preds);
+      setStats(calculatedStats);
+    } catch (err) {
+      console.error("Failed to fetch data", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
+    // 1. Initial Data Fetch
     fetchData();
-  }, []);
 
-  // Mock Authentication Handlers
-  const handleLogin = (role: 'admin' | 'user') => {
-    if (role === 'admin') {
-        setUser({
-            id: 'admin1',
-            email: 'admin@vegasvault.com',
-            is_admin: true,
-            subscription_status: 'active'
-        });
-        setView('admin');
-    } else {
-        setUser({
-            id: 'user1',
-            email: 'user@example.com',
+    // 2. Real-time Subscription for Predictions
+    const predictionChannel = supabase
+      .channel('public:predictions')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'predictions' },
+        (payload) => {
+          console.log('Real-time update received:', payload);
+          fetchData(); // Refresh data on any INSERT/UPDATE/DELETE
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') setRealtimeConnected(true);
+        if (status === 'CLOSED' || status === 'CHANNEL_ERROR') setRealtimeConnected(false);
+      });
+
+    // 3. Auth Listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session) {
+        // Fetch detailed profile from 'profiles' table
+        const profile = await dataService.getUserProfile(session.user.id);
+        
+        if (profile) {
+          setUser(profile);
+        } else {
+          // Fallback if profile trigger hasn't run yet or failed
+          setUser({
+            id: session.user.id,
+            email: session.user.email || '',
             is_admin: false,
-            subscription_status: 'inactive' // Default to free user
-        });
+            subscription_status: 'none'
+          });
+        }
+      } else {
+        setUser(null);
         setView('home');
-    }
-  };
+      }
+    });
+
+    return () => {
+      supabase.removeChannel(predictionChannel);
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const handleUpgrade = () => {
     if (!user) {
-        alert("Please login first.");
-        return;
+      setAuthModalOpen(true);
+      return;
     }
-    const confirm = window.confirm("Simulate Stripe Payment Success?");
-    if (confirm) {
-        setUser({ ...user, subscription_status: 'active' });
-        alert("Subscription Active! You can now see Premium Picks.");
-    }
+    // Placeholder for Stripe Logic
+    alert("Redirecting to Stripe Checkout...");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
     setView('home');
   };
 
+  // Error Boundary Fallback for View
+  if (loading && !predictions.length && !stats.totalWins) {
+     return (
+         <div className="min-h-screen bg-vegas-black flex flex-col items-center justify-center text-white">
+             <Loader2 className="w-10 h-10 animate-spin text-vegas-green mb-4" />
+             <h2 className="text-xl font-bold tracking-widest">LOADING VAULT...</h2>
+         </div>
+     );
+  }
+
   return (
     <div className="min-h-screen bg-vegas-black text-white font-sans selection:bg-vegas-green selection:text-black">
+      <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
+
       {/* Navigation */}
       <nav className="border-b border-neutral-800 bg-neutral-950/80 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -79,6 +121,21 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex items-center space-x-4">
+                {/* Realtime Indicator */}
+                <div className="hidden md:flex items-center space-x-1 text-[10px] font-mono uppercase tracking-wider text-neutral-600">
+                   {realtimeConnected ? (
+                       <>
+                        <Wifi className="w-3 h-3 text-vegas-green" />
+                        <span className="text-vegas-green/50">Live</span>
+                       </>
+                   ) : (
+                       <>
+                        <WifiOff className="w-3 h-3" />
+                        <span>Offline</span>
+                       </>
+                   )}
+                </div>
+
                 {user?.is_admin && (
                     <button 
                         onClick={() => setView('admin')}
@@ -106,20 +163,12 @@ const App: React.FC = () => {
                         </button>
                     </div>
                 ) : (
-                    <div className="flex items-center space-x-3">
-                         <button 
-                            onClick={() => handleLogin('user')}
-                            className="text-sm text-neutral-400 hover:text-white font-medium"
-                        >
-                            Login
-                        </button>
-                        <button 
-                            onClick={() => handleLogin('admin')}
-                            className="text-xs text-neutral-600 hover:text-neutral-400"
-                        >
-                            (Demo Admin)
-                        </button>
-                    </div>
+                    <button 
+                        onClick={() => setAuthModalOpen(true)}
+                        className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white text-sm font-bold rounded transition-colors"
+                    >
+                        Sign In
+                    </button>
                 )}
             </div>
         </div>
@@ -130,6 +179,7 @@ const App: React.FC = () => {
             <div className="py-10">
                  <div className="mb-8 flex items-center justify-between">
                     <h2 className="text-3xl font-bold text-white">Admin Console</h2>
+                    <button onClick={fetchData} className="text-sm text-vegas-green hover:underline">Refresh Data</button>
                 </div>
                 <AdminPanel predictions={predictions} onUpdate={fetchData} />
             </div>
@@ -144,15 +194,13 @@ const App: React.FC = () => {
                          <div className="flex items-center justify-between mb-6">
                             <h2 className="text-2xl font-bold text-white">Recent Picks</h2>
                             <div className="flex items-center space-x-2 text-sm text-neutral-500">
-                                <span className="w-2 h-2 bg-vegas-green rounded-full animate-pulse"></span>
-                                <span>Live Feed</span>
+                                <span className={`w-2 h-2 rounded-full ${realtimeConnected ? 'bg-vegas-green animate-pulse' : 'bg-red-500'}`}></span>
+                                <span>{realtimeConnected ? 'Live Feed' : 'Connecting...'}</span>
                             </div>
                         </div>
                         
                         <div className="space-y-4">
-                            {loading ? (
-                                <div className="text-center py-20 text-neutral-600 animate-pulse">Loading data...</div>
-                            ) : predictions.length > 0 ? (
+                            {predictions.length > 0 ? (
                                 predictions.map(prediction => (
                                     <PredictionCard 
                                         key={prediction.id} 
@@ -162,7 +210,9 @@ const App: React.FC = () => {
                                     />
                                 ))
                             ) : (
-                                <div className="text-center py-20 text-neutral-600">No picks published yet.</div>
+                                <div className="text-center py-20 text-neutral-600 bg-neutral-900/20 rounded border border-neutral-800 border-dashed">
+                                    No picks active currently. Check back soon.
+                                </div>
                             )}
                         </div>
                     </div>

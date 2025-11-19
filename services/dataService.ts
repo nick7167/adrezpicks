@@ -1,47 +1,87 @@
-import { INITIAL_PREDICTIONS } from '../constants';
+import { supabase } from '../lib/supabaseClient';
 import { Prediction, PredictionStatus, Stats, UserProfile } from '../types';
-
-// In a real app, this would import the supabase client initialized with the keys from constants.ts
-// import { createClient } from '@supabase/supabase-js';
-// const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-let mockPredictions: Prediction[] = [...INITIAL_PREDICTIONS];
 
 export const dataService = {
   getPredictions: async (): Promise<Prediction[]> => {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 400));
-    // Sort by date desc
-    return [...mockPredictions].sort((a, b) => 
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+    const { data, error } = await supabase
+      .from('predictions')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching predictions:', error);
+      return [];
+    }
+    return data as Prediction[];
   },
 
-  createPrediction: async (prediction: Omit<Prediction, 'id' | 'created_at' | 'status'>): Promise<Prediction> => {
-    const newPred: Prediction = {
-      ...prediction,
-      id: Math.random().toString(36).substring(7),
-      created_at: new Date().toISOString(),
-      status: PredictionStatus.PENDING
-    };
-    mockPredictions = [newPred, ...mockPredictions];
-    return newPred;
+  createPrediction: async (prediction: Omit<Prediction, 'id' | 'created_at' | 'status'>): Promise<Prediction | null> => {
+    const { data, error } = await supabase
+      .from('predictions')
+      .insert([{
+        ...prediction,
+        status: PredictionStatus.PENDING,
+        // Supabase handles created_at usually, but we can pass it if needed or rely on default
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error creating prediction:', error);
+      return null;
+    }
+    return data as Prediction;
   },
 
   updatePrediction: async (id: string, updates: Partial<Omit<Prediction, 'id' | 'created_at'>>): Promise<void> => {
-     mockPredictions = mockPredictions.map(p => 
-      p.id === id ? { ...p, ...updates } : p
-    );
+    const { error } = await supabase
+      .from('predictions')
+      .update(updates)
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error updating prediction:', error);
+      throw error;
+    }
   },
 
   deletePrediction: async (id: string): Promise<void> => {
-    mockPredictions = mockPredictions.filter(p => p.id !== id);
+    const { error } = await supabase
+      .from('predictions')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting prediction:', error);
+      throw error;
+    }
   },
 
   updateStatus: async (id: string, status: PredictionStatus, score?: string): Promise<void> => {
-    mockPredictions = mockPredictions.map(p => 
-      p.id === id ? { ...p, status, result_score: score } : p
-    );
+    const { error } = await supabase
+      .from('predictions')
+      .update({ status, result_score: score })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error updating status:', error);
+      throw error;
+    }
+  },
+
+  getUserProfile: async (userId: string): Promise<UserProfile | null> => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    
+    if (error) {
+      // Profile might not exist yet if trigger hasn't run, return basic info if needed
+      console.warn('Error fetching profile:', error.message);
+      return null;
+    }
+    return data as UserProfile;
   },
 
   calculateStats: (predictions: Prediction[]): Stats => {
@@ -59,9 +99,7 @@ export const dataService = {
     settled.forEach(p => {
         totalRisked += p.units;
         if (p.status === PredictionStatus.WON) {
-            // Decimal Odds Profit Formula: Stake * (Odds - 1)
             const decimalOdds = parseFloat(p.odds);
-            // Fallback to 1.91 (standard -110) if parse fails
             const oddsVal = !isNaN(decimalOdds) ? decimalOdds : 1.91;
             const profit = p.units * (oddsVal - 1);
             netUnits += profit;
@@ -70,7 +108,6 @@ export const dataService = {
         }
     });
     
-    // Simple ROI calc: Net Units / Total Units Risked * 100
     const roi = totalRisked > 0 ? (netUnits / totalRisked) * 100 : 0;
 
     return {
