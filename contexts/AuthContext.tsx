@@ -23,11 +23,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Helper to unify profile fetching logic
   const fetchProfile = async (currentSession: Session) => {
     try {
-      const profile = await dataService.getUserProfile(currentSession.user.id);
+      // 2-second timeout specifically for profile fetch to prevent secondary hang
+      const profilePromise = dataService.getUserProfile(currentSession.user.id);
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
+      
+      const profile = await Promise.race([profilePromise, timeoutPromise]);
+
       if (profile) {
         setUser(profile);
       } else {
-        // Fallback if profile table is empty/missing but auth exists
+        // Fallback if profile table is empty/missing/slow
+        // Check if the session is actually valid, if not, user might be null
         setUser({
           id: currentSession.user.id,
           email: currentSession.user.email || '',
@@ -50,10 +56,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     let mounted = true;
 
+    // FAIL-SAFE: Force app to load after 3 seconds even if DB is sleeping
+    const safetyTimer = setTimeout(() => {
+        if (mounted && loading) {
+            console.warn("Auth initialization timed out. Forcing guest mode.");
+            setLoading(false);
+        }
+    }, 3000);
+
     const initAuth = async () => {
       try {
-        // 1. Get Session
-        const { data: { session: initialSession } } = await supabase.auth.getSession();
+        // 1. Get Session with error handling for corrupt tokens
+        const { data, error } = await supabase.auth.getSession();
+        
+        if (error) {
+            console.error("Detected corrupt session/token. clearing storage.", error);
+            // Critical: If the token is bad, sign out to clear localStorage so the user isn't stuck loop
+            await supabase.auth.signOut();
+            if (mounted) setLoading(false);
+            return;
+        }
+        
+        const initialSession = data.session;
         
         if (mounted) {
             setSession(initialSession);
@@ -62,9 +86,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
         }
       } catch (error) {
-        console.error("Auth initialization failed:", error);
+        console.error("Auth initialization failed unexpectedly:", error);
+        // Last resort: try to clear session if something exploded
+        await supabase.auth.signOut(); 
       } finally {
-        if (mounted) setLoading(false);
+        if (mounted) {
+            setLoading(false);
+            clearTimeout(safetyTimer); // Clear the safety timer if we finished successfully
+        }
       }
     };
 
@@ -74,27 +103,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted) return;
       
-      console.log(`Auth Change: ${event}`);
+      // console.log(`Auth Change: ${event}`);
       setSession(newSession);
 
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         if (newSession) await fetchProfile(newSession);
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
-        setLoading(false);
+        // Optional: Clear sensitive data from memory if needed
       }
     });
 
     return () => {
       mounted = false;
+      clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
   }, []);
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
+    try {
+        await supabase.auth.signOut();
+    } catch (e) {
+        console.error("Error signing out:", e);
+    } finally {
+        // Always reset state even if API fails
+        setUser(null);
+        setSession(null);
+    }
   };
 
   const refreshProfile = async () => {
@@ -103,7 +139,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Placeholder since modal is controlled in App.tsx, but Context can trigger it via events if needed later
   const signIn = () => {}; 
 
   return (

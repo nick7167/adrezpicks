@@ -52,7 +52,7 @@ const App: React.FC = () => {
       setStats(calculatedStats);
     } catch (err: any) {
       console.error("Failed to fetch data", err);
-      addToast("Failed to load predictions", 'error');
+      addToast("Connection slow...", 'info');
     } finally {
       setLoadingData(false);
     }
@@ -69,8 +69,14 @@ const App: React.FC = () => {
   };
 
   // -- Initial Data Load --
+  // We use authLoading to delay this slightly, OR we run it parallel. 
+  // Safest is to run it once App mounts.
   useEffect(() => {
-    fetchPredictions();
+    // Only fetch if we are NOT in the initial loading state, 
+    // OR if we want to fetch in background.
+    if (!authLoading) {
+        fetchPredictions();
+    }
 
     // Realtime Listener
     const predictionChannel = supabase
@@ -90,7 +96,7 @@ const App: React.FC = () => {
     return () => {
       supabase.removeChannel(predictionChannel);
     };
-  }, []);
+  }, [authLoading]); // Re-run once auth settles
 
   // -- Handlers --
   const handleUpgrade = () => {
@@ -112,7 +118,7 @@ const App: React.FC = () => {
   // -- Render Loading State --
   if (authLoading) {
       return (
-          <div className="min-h-screen bg-vegas-black flex flex-col items-center justify-center text-white">
+          <div className="min-h-screen bg-vegas-black flex flex-col items-center justify-center text-white z-[9999] relative">
               <div className="relative">
                 <div className="w-16 h-16 border-4 border-neutral-800 border-t-vegas-green rounded-full animate-spin"></div>
                 <div className="absolute inset-0 flex items-center justify-center">
@@ -120,6 +126,7 @@ const App: React.FC = () => {
                 </div>
               </div>
               <h2 className="text-xl font-bold tracking-tight mt-6 animate-pulse">VEGAS<span className="text-neutral-500">VAULT</span></h2>
+              <p className="text-neutral-600 text-xs mt-2 font-mono animate-in fade-in duration-1000 delay-1000 fill-mode-forwards opacity-0">Establishing Secure Connection...</p>
           </div>
       );
   }
@@ -133,12 +140,12 @@ const App: React.FC = () => {
       />
 
       {/* Toast Container */}
-      <div className="fixed bottom-4 right-4 z-[200] flex flex-col gap-2">
+      <div className="fixed bottom-4 right-4 z-[200] flex flex-col gap-2 pointer-events-none">
         {toasts.map(toast => (
             <div 
                 key={toast.id}
                 className={`
-                    px-4 py-3 rounded shadow-lg border flex items-center gap-3 min-w-[300px] animate-in slide-in-from-right duration-300
+                    px-4 py-3 rounded shadow-lg border flex items-center gap-3 min-w-[300px] animate-in slide-in-from-right duration-300 pointer-events-auto
                     ${toast.type === 'success' ? 'bg-green-900/90 border-vegas-green text-white' : 
                       toast.type === 'error' ? 'bg-red-900/90 border-vegas-red text-white' : 
                       'bg-neutral-800/90 border-neutral-700 text-white'}
