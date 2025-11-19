@@ -5,7 +5,7 @@ const DEFAULT_SUPABASE_URL = "https://ozlhvvxivcjeatrvdsqx.supabase.co";
 const DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96bGh2dnhpdmNqZWF0cnZkc3F4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM1MTkxNTcsImV4cCI6MjA3OTA5NTE1N30.JdCZphG70zrBd3cSv_mZS0Grme1oBKjxJcBuz_UMoR0";
 const DEFAULT_STRIPE_KEY = "pk_test_51SV8RkQ12dqc2hKRZfpj57ulLjnOHunyTAEMVFPYVmq360UU9upe6v9SUFvIKAR5x1yLPLVBfsyQ52Be9VoV5WSU00hrCmA4wF";
 // Replace this with your actual Stripe Price ID from the Stripe Dashboard (e.g., price_1Pxyz...)
-const DEFAULT_STRIPE_PRICE_ID = "price_1Qxyz123456789"; 
+const DEFAULT_STRIPE_PRICE_ID = "price_1SV8SbQ12dqc2hKRFAXzW3rn"; 
 
 // Safe Environment Variable Access
 // This prevents "ReferenceError: process is not defined" in Vite/Browser environments
