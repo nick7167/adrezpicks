@@ -9,6 +9,7 @@ import { Prediction, Stats, ViewState, Sport, PredictionStatus } from './types';
 import { dataService } from './services/dataService';
 import { supabase } from './lib/supabaseClient';
 import { useAuth } from './contexts/AuthContext';
+import { STRIPE_PRICE_ID } from './constants';
 
 // -- Toast Notification Component --
 interface Toast {
@@ -33,6 +34,7 @@ const App: React.FC = () => {
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [sortBy, setSortBy] = useState<SortOption>('date-desc');
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   // -- Toast Logic --
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -129,14 +131,49 @@ const App: React.FC = () => {
   }, [predictions, sortBy]);
 
   // -- Handlers --
-  const handleUpgrade = () => {
+  const handleUpgrade = async () => {
     if (!user) {
       setAuthModalOpen(true);
       addToast("Please sign in to upgrade", 'info');
       return;
     }
-    // Integration with Stripe would go here
-    window.open('https://stripe.com', '_blank');
+
+    setIsCheckingOut(true);
+    addToast("Preparing secure checkout...", "info");
+
+    try {
+        // Call Vercel API Route instead of Supabase Edge Function
+        const response = await fetch('/api/create-checkout-session', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+                priceId: STRIPE_PRICE_ID,
+                returnUrl: window.location.origin,
+                userId: user.id,
+                email: user.email
+            }),
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Failed to initiate checkout');
+        }
+
+        const data = await response.json();
+
+        if (data?.url) {
+            window.location.href = data.url;
+        } else {
+            throw new Error("No checkout URL returned");
+        }
+
+    } catch (error: any) {
+        console.error("Checkout Error:", error);
+        addToast(`Error: ${error.message}`, "error");
+        setIsCheckingOut(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -372,9 +409,10 @@ const App: React.FC = () => {
                             ) : (
                                 <button 
                                     onClick={handleUpgrade}
-                                    className="w-full py-3 bg-white hover:bg-neutral-200 text-black font-bold rounded transition-colors shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+                                    disabled={isCheckingOut}
+                                    className="w-full py-3 bg-white hover:bg-neutral-200 text-black font-bold rounded transition-colors shadow-[0_0_20px_rgba(255,255,255,0.1)] flex justify-center items-center"
                                 >
-                                    Join for $29/mo
+                                    {isCheckingOut ? <Loader2 className="w-5 h-5 animate-spin" /> : "Join for $29/mo"}
                                 </button>
                             )}
                             <p className="text-xs text-neutral-600 text-center mt-4">Cancel anytime. 7-day money back guarantee.</p>
