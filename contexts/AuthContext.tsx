@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { UserProfile } from '../types';
 import { dataService } from '../services/dataService';
@@ -8,7 +8,7 @@ interface AuthContextType {
   user: UserProfile | null;
   session: Session | null;
   loading: boolean;
-  signIn: () => void; // Trigger to open modal
+  signIn: () => void; 
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -20,129 +20,105 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Helper to unify profile fetching logic
-  const fetchProfile = async (currentSession: Session) => {
+  // robust profile fetcher that handles missing rows gracefully
+  const fetchAndSetProfile = useCallback(async (currentSession: Session) => {
     try {
-      // Removed Promise.race timeout which was causing permissions to drop on tab resume/network lag
-      const profile = await dataService.getUserProfile(currentSession.user.id);
-
-      if (profile) {
-        setUser(profile);
+      const profileData = await dataService.getUserProfile(currentSession.user.id);
+      
+      if (profileData) {
+        setUser(profileData);
       } else {
-        // Profile not found in DB, implies basic user
-        // Only overwrite if we are sure we didn't get a profile
-        setUser(prev => {
-             // If we already have a profile for this ID, and the DB returned null (maybe temporary glitch?), 
-             // we might want to be careful, but typically null means "row missing". 
-             // We'll assume row missing means basic user.
-             return {
-                id: currentSession.user.id,
-                email: currentSession.user.email || '',
-                is_admin: false,
-                subscription_status: 'none'
-            };
+        // Fallback if profile row is missing in DB but Auth exists
+        setUser({
+          id: currentSession.user.id,
+          email: currentSession.user.email || '',
+          is_admin: false,
+          subscription_status: 'none'
         });
       }
     } catch (error) {
       console.error("Profile sync error:", error);
-      // On network error, preserve existing user state if ID matches
-      setUser(prev => {
-          if (prev && prev.id === currentSession.user.id) {
-              return prev;
-          }
-          return {
-            id: currentSession.user.id,
-            email: currentSession.user.email || '',
-            is_admin: false,
-            subscription_status: 'none'
-          };
+      // Even on error, valid session means we are logged in, just with basic info
+      setUser({
+        id: currentSession.user.id,
+        email: currentSession.user.email || '',
+        is_admin: false,
+        subscription_status: 'none'
       });
     }
-  };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
-    // FAIL-SAFE: Force app to load after 3 seconds even if DB is sleeping
-    const safetyTimer = setTimeout(() => {
-        if (mounted && loading) {
-            console.warn("Auth initialization timed out. Forcing guest mode.");
-            setLoading(false);
-        }
-    }, 3000);
-
-    const initAuth = async () => {
+    const initializeAuth = async () => {
       try {
-        // 1. Get Session with error handling for corrupt tokens
-        const { data, error } = await supabase.auth.getSession();
-        
-        if (error) {
-            console.error("Detected corrupt session/token. clearing storage.", error);
-            // Critical: If the token is bad, sign out to clear localStorage so the user isn't stuck loop
-            await supabase.auth.signOut();
-            if (mounted) setLoading(false);
-            return;
-        }
-        
-        const initialSession = data.session;
+        // 1. Check active session immediately
+        const { data: { session: initialSession } } = await supabase.auth.getSession();
         
         if (mounted) {
-            setSession(initialSession);
             if (initialSession) {
-                await fetchProfile(initialSession);
+                setSession(initialSession);
+                await fetchAndSetProfile(initialSession);
             }
         }
       } catch (error) {
-        console.error("Auth initialization failed unexpectedly:", error);
-        // Last resort: try to clear session if something exploded
-        await supabase.auth.signOut(); 
+        console.error("Auth initialization failed:", error);
       } finally {
-        if (mounted) {
-            setLoading(false);
-            clearTimeout(safetyTimer); // Clear the safety timer if we finished successfully
-        }
+        if (mounted) setLoading(false);
       }
     };
 
-    initAuth();
+    initializeAuth();
 
-    // 2. Listen for changes
+    // 2. Set up the single source of truth listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted) return;
       
-      // console.log(`Auth Change: ${event}`);
-      setSession(newSession);
+      // console.log("Auth Event:", event); // Debugging
 
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        if (newSession) await fetchProfile(newSession);
-      } else if (event === 'SIGNED_OUT') {
+      if (newSession) {
+        setSession(newSession);
+        // Only refetch profile on sign-in or initial load to save bandwidth
+        // Token refresh shouldn't necessarily trigger a profile refetch unless needed
+        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'USER_UPDATED') {
+             await fetchAndSetProfile(newSession);
+        } else if (!user) {
+            // If we have a session but no user in state (rare edge case), fetch it
+            await fetchAndSetProfile(newSession);
+        }
+      } else {
+        // Explicitly handle logout
+        setSession(null);
         setUser(null);
-        // Optional: Clear sensitive data from memory if needed
       }
+      
+      // Ensure loading is false after any auth event
+      setLoading(false);
     });
 
     return () => {
       mounted = false;
-      clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [fetchAndSetProfile, user]);
 
   const signOut = async () => {
     try {
+        setLoading(true);
         await supabase.auth.signOut();
-    } catch (e) {
-        console.error("Error signing out:", e);
-    } finally {
-        // Always reset state even if API fails
         setUser(null);
         setSession(null);
+    } catch (error) {
+        console.error("Sign out error:", error);
+    } finally {
+        setLoading(false);
     }
   };
 
   const refreshProfile = async () => {
     if (session) {
-      await fetchProfile(session);
+      await fetchAndSetProfile(session);
     }
   };
 

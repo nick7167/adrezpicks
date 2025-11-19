@@ -74,14 +74,8 @@ const App: React.FC = () => {
   };
 
   // -- Initial Data Load --
-  // We use authLoading to delay this slightly, OR we run it parallel. 
-  // Safest is to run it once App mounts.
   useEffect(() => {
-    // Only fetch if we are NOT in the initial loading state, 
-    // OR if we want to fetch in background.
-    if (!authLoading) {
-        fetchPredictions();
-    }
+    fetchPredictions();
 
     // Realtime Listener
     const predictionChannel = supabase
@@ -101,7 +95,7 @@ const App: React.FC = () => {
     return () => {
       supabase.removeChannel(predictionChannel);
     };
-  }, [authLoading]); // Re-run once auth settles
+  }, []); 
 
   // -- Derived State --
   const sortedPredictions = useMemo(() => {
@@ -116,7 +110,6 @@ const App: React.FC = () => {
             case 'units-desc':
                 return b.units - a.units;
             case 'status':
-                // Custom order: Pending > Won > Lost > Push
                 const statusOrder = { 
                     [PredictionStatus.PENDING]: 0, 
                     [PredictionStatus.WON]: 1, 
@@ -142,7 +135,6 @@ const App: React.FC = () => {
     addToast("Preparing secure checkout...", "info");
 
     try {
-        // Call Vercel API Route instead of Supabase Edge Function
         const response = await fetch('/api/create-checkout-session', {
             method: 'POST',
             headers: {
@@ -193,7 +185,7 @@ const App: React.FC = () => {
                 </div>
               </div>
               <h2 className="text-xl font-bold tracking-tight mt-6 animate-pulse">VEGAS<span className="text-neutral-500">VAULT</span></h2>
-              <p className="text-neutral-600 text-xs mt-2 font-mono animate-in fade-in duration-1000 delay-1000 fill-mode-forwards opacity-0">Establishing Secure Connection...</p>
+              <p className="text-neutral-600 text-xs mt-2 font-mono animate-in fade-in duration-1000 delay-200">Establishing Secure Connection...</p>
           </div>
       );
   }
