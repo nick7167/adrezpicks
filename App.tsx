@@ -241,7 +241,11 @@ const App: React.FC = () => {
                         <RefreshCw className="w-3 h-3 mr-2" /> Refresh Data
                     </button>
                 </div>
-                <AdminPanel predictions={predictions} onUpdate={() => { fetchPredictions(); addToast("Prediction updated", "success"); }} />
+                <AdminPanel 
+                    predictions={predictions} 
+                    onUpdate={fetchPredictions}
+                    triggerToast={addToast}
+                />
             </div>
         ) : (
             <>

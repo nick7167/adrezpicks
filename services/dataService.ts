@@ -15,7 +15,7 @@ export const dataService = {
     return (data || []) as Prediction[];
   },
 
-  createPrediction: async (prediction: Omit<Prediction, 'id' | 'created_at' | 'status'>): Promise<Prediction | null> => {
+  createPrediction: async (prediction: Omit<Prediction, 'id' | 'created_at' | 'status'>): Promise<Prediction> => {
     const { data, error } = await supabase
       .from('predictions')
       .insert([{
@@ -27,7 +27,7 @@ export const dataService = {
 
     if (error) {
       console.error('Error creating prediction:', error);
-      return null;
+      throw error; // Changed to throw so UI can handle it
     }
     return data as Prediction;
   },
@@ -74,7 +74,7 @@ export const dataService = {
             .from('profiles')
             .select('*')
             .eq('id', userId)
-            .maybeSingle(); // Use maybeSingle to avoid errors on empty results
+            .maybeSingle();
 
         if (error) {
             console.error('Error fetching profile:', error);
