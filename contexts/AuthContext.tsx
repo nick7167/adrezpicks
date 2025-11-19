@@ -55,49 +55,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     mounted.current = true;
-    let safetyTimer: ReturnType<typeof setTimeout>;
 
     const initializeAuth = async () => {
       try {
-        // 1. Set a fail-safe timeout. If Supabase hangs for 3s, force the app to load.
-        safetyTimer = setTimeout(() => {
-            if (mounted.current && loading) {
-                console.warn("Auth timed out. Forcing application load.");
-                setLoading(false);
-            }
-        }, 3000);
+        // Race condition: If Supabase takes > 3s, we assume it's stuck (common with stale local storage)
+        // and we abort waiting. This prevents the white screen of death.
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Auth Init Timeout")), 3000)
+        );
 
-        // 2. Check for an active session immediately
-        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
+        // @ts-ignore
+        const { data, error } = await Promise.race([sessionPromise, timeoutPromise]);
         
         if (error) throw error;
 
-        if (mounted.current) {
-            if (initialSession) {
-                setSession(initialSession);
-                // Await profile to prevent UI flicker, but rely on safetyTimer if it hangs
-                await fetchProfile(initialSession);
-            }
+        if (mounted.current && data?.session) {
+            setSession(data.session);
+            await fetchProfile(data.session);
         }
       } catch (error) {
-        console.error("Auth initialization failed:", error);
-        // If session is corrupt, clear it to prevent infinite loops
+        console.warn("Auth initialization interrupted:", error);
+        
+        // CRITICAL FIX: If we time out, it's likely due to stale/corrupt localStorage.
+        // We must clear it to allow fresh login attempts to work.
         if (mounted.current) {
-             await supabase.auth.signOut().catch(() => {});
+             try {
+                 // Clear Supabase tokens from LocalStorage to unblock the client
+                 Object.keys(localStorage).forEach((key) => {
+                     if (key.startsWith('sb-') && key.endsWith('-auth-token')) {
+                         console.log("Clearing stale auth token:", key);
+                         localStorage.removeItem(key);
+                     }
+                 });
+                 // Force sign out state in client to be safe
+                 await supabase.auth.signOut().catch(() => {});
+             } catch (e) {
+                 console.error("Error clearing stale auth:", e);
+             }
+             
              setSession(null);
              setUser(null);
         }
       } finally {
         if (mounted.current) {
             setLoading(false);
-            clearTimeout(safetyTimer);
         }
       }
     };
 
     initializeAuth();
 
-    // 3. Listen for live auth changes (Login, Logout, Auto-Refresh)
+    // Listen for live auth changes (Login, Logout, Auto-Refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!mounted.current) return;
       
@@ -111,23 +120,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
         setSession(null);
       } else if (event === 'TOKEN_REFRESHED') {
-        // Token refreshed, usually profile data hasn't changed, so we skip fetching
-        // to avoid race conditions, unless we somehow lost the user state.
         if (newSession && !user) {
             await fetchProfile(newSession);
         }
       }
       
-      // Always ensure loading is false after an event is processed
       setLoading(false);
     });
 
     return () => {
       mounted.current = false;
-      if (safetyTimer) clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
-  }, [fetchProfile]); // user/session omitted to prevent re-running subscription
+  }, [fetchProfile]);
 
   const signOut = async () => {
     try {

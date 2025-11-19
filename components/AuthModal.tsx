@@ -24,10 +24,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => 
 
     try {
       if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+        // Wrap in race to prevent infinite spinner if client is stuck
+        const { error } = await Promise.race([
+            supabase.auth.signInWithPassword({ email, password }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Request timed out. Please try again.")), 10000))
+        ]) as any;
         
         if (error) throw error;
         // AuthProvider will pick up the session change automatically
