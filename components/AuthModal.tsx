@@ -21,31 +21,20 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     setLoading(true);
     setError(null);
 
-    // Create a timeout promise that rejects after 10 seconds
-    const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Connection timed out. The server is taking too long to respond.")), 10000);
-    });
-
     try {
       if (isLogin) {
-        const loginPromise = supabase.auth.signInWithPassword({
+        const { error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
-        
-        // Race the login against the timeout
-        const { error } = await Promise.race([loginPromise, timeoutPromise]) as any;
         
         if (error) throw error;
         onClose();
       } else {
-        const signUpPromise = supabase.auth.signUp({
+        const { error } = await supabase.auth.signUp({
           email,
           password,
         });
-
-        // Race the signup against the timeout
-        const { error } = await Promise.race([signUpPromise, timeoutPromise]) as any;
 
         if (error) throw error;
         alert('Registration successful! Please check your email to verify your account.');
@@ -53,7 +42,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       }
     } catch (err: any) {
       console.error("Auth error:", err);
-      setError(err.message || 'An unexpected error occurred');
+      // More user friendly error mapping
+      let msg = err.message;
+      if (msg.includes("Invalid login credentials")) msg = "Incorrect email or password.";
+      
+      setError(msg || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }

@@ -3,38 +3,18 @@ import { Prediction, PredictionStatus, Stats, UserProfile } from '../types';
 
 export const dataService = {
   getPredictions: async (): Promise<Prediction[]> => {
-    console.log("Fetching predictions...");
-    
-    try {
-        // Create a timeout promise to prevent hanging indefinitely
-        // If Supabase takes longer than 5 seconds, we return empty list so the UI loads
-        const timeout = new Promise<Prediction[]>((resolve) => {
-            setTimeout(() => {
-                console.warn("Supabase fetch timed out (5s) - defaulting to empty list.");
-                resolve([]); 
-            }, 5000); 
-        });
+    // No more artificial timeouts. Let Supabase connection resolve naturally.
+    const { data, error } = await supabase
+        .from('predictions')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-        const fetchPromise = supabase
-            .from('predictions')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .then(({ data, error }) => {
-                if (error) {
-                    console.error('Error fetching predictions:', error);
-                    // Return empty array on error so app doesn't crash
-                    return [];
-                }
-                return (data || []) as Prediction[];
-            });
-
-        // Race the fetch against the timeout
-        return await Promise.race([fetchPromise, timeout]);
-
-    } catch (e) {
-        console.error("Unexpected error in getPredictions:", e);
+    if (error) {
+        console.error('Error fetching predictions:', error);
+        // Return empty array only on actual error
         return [];
     }
+    return (data || []) as Prediction[];
   },
 
   createPrediction: async (prediction: Omit<Prediction, 'id' | 'created_at' | 'status'>): Promise<Prediction | null> => {
@@ -92,29 +72,22 @@ export const dataService = {
 
   getUserProfile: async (userId: string): Promise<UserProfile | null> => {
     try {
-        // Timeout Guard for Profile Fetch
-        const timeout = new Promise<UserProfile | null>((resolve) => {
-            setTimeout(() => {
-                console.warn("Profile fetch timed out (5s) - returning null.");
-                resolve(null); 
-            }, 5000); 
-        });
-
-        const fetchPromise = supabase
+        const { data, error } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', userId)
-            .single()
-            .then(({ data, error }) => {
-                if (error) {
-                    console.warn('Error fetching profile:', error.message);
-                    return null;
-                }
-                return data as UserProfile;
-            });
+            .single();
 
-        return await Promise.race([fetchPromise, timeout]);
-        
+        if (error) {
+            // specific check for "row not found" which is expected if trigger failed
+            if (error.code === 'PGRST116') {
+                console.warn("User profile row does not exist.");
+                return null;
+            }
+            console.error('Error fetching profile:', error);
+            return null;
+        }
+        return data as UserProfile;
     } catch (e) {
         console.error("Unexpected error fetching profile:", e);
         return null;
